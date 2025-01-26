@@ -13,19 +13,27 @@ from PyPDF2 import PdfReader
 BASE_URL = "https://www.vyatsu.ru/reports/schedule/Group/"
 FILE_STORAGE_PATH = "./downloaded_files/"
 HASH_STORAGE_PATH = "./hashes/"
-try:
-    with open('secrets.json', 'r') as secrets_file:
-        secrets = json.load(secrets_file)
-except FileNotFoundError:
-    with open('secrets.json', 'w') as secrets_file:
-        secrets_file.write(json.dumps(
-            {'TELEGRAM_TOKEN': "", 'TELEGRAM_CHAT_ID': '', "GROUP_ID": ""},
-            separators=(',', ':')))
-        print("Please edit secrets.json.")
-        exit(0)
-# Создаем необходимые папки, если их нет
-os.makedirs(FILE_STORAGE_PATH, exist_ok=True)
-os.makedirs(HASH_STORAGE_PATH, exist_ok=True)
+REQUIRED_KEYS = ['TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID', 'GROUP_ID']
+SECRETS_FILENAME = "secrets.json"
+
+
+def load_secrets():
+    if os.path.exists(SECRETS_FILENAME):
+        with open(SECRETS_FILENAME, 'r') as secrets_file:
+            secrets = json.load(secrets_file)
+            for key in REQUIRED_KEYS:
+                if key not in secrets or not secrets[key]:
+                    print(f"Missing or empty value for key: {key}.")
+                    print("Please fill out secrets.json completely.")
+                    exit(1)
+    else:
+        with open(SECRETS_FILENAME, 'w') as secrets_file:
+            secrets_file.write(json.dumps(
+                {key: "" for key in REQUIRED_KEYS},
+                separators=(',', ':')))
+            print("The secrets.json file has been created. Please fill it in.")
+            exit(1)
+    return secrets
 
 
 # Функция для расчета двухнедельных интервалов
@@ -97,13 +105,14 @@ def extract_text_from_pdf(file_path):
 
 # Отправка файла и текста в Telegram
 async def send_to_telegram(file_path, difference_text=None):
-    bot = Bot(token=secrets.TELEGRAM_TOKEN)
+    bot = Bot(token=secrets['TELEGRAM_TOKEN'])
     try:
         with open(file_path, "rb") as f:
-            await bot.send_document(chat_id=secrets.TELEGRAM_CHAT_ID, document=f, caption=str(calculate_hash(file_path)))
+            await bot.send_document(chat_id=secrets['TELEGRAM_CHAT_ID'], document=f,
+                                    caption=str(calculate_hash(file_path)))
         if difference_text:
             await bot.send_message(
-                chat_id=secrets.TELEGRAM_CHAT_ID,
+                chat_id=secrets['TELEGRAM_CHAT_ID'],
                 text=f"Изменения в расписании:\n\n{difference_text}",
                 parse_mode=ParseMode.HTML,
             )
@@ -118,7 +127,7 @@ async def check_schedule():
     date_ranges = calculate_schedule_ranges(today)
 
     for start_date, end_date in date_ranges:
-        url = f"{BASE_URL}_{secrets.GROUP_ID}_{'1' if today.month > 7 else '2'}_{format_date(start_date)}_{format_date(end_date)}.pdf"
+        url = f"{BASE_URL}_{secrets['GROUP_ID']}_{'1' if today.month > 7 else '2'}_{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_name = f"{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
@@ -166,6 +175,10 @@ async def check_schedule():
 
 # Основной цикл приложения
 async def main():
+    os.makedirs(FILE_STORAGE_PATH, exist_ok=True)
+    os.makedirs(HASH_STORAGE_PATH, exist_ok=True)
+    global secrets
+    secrets = load_secrets()
     while True:
         print(f"[{datetime.now()}] Запуск проверки расписания...")
         await check_schedule()
