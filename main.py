@@ -11,9 +11,11 @@ from PyPDF2 import PdfReader
 
 # Настройки
 BASE_URL = "https://www.vyatsu.ru/reports/schedule/Group/"
+BASE_SES_URL = "https://www.vyatsu.ru/reports/schedule/Ses/"
 FILE_STORAGE_PATH = "./downloaded_files/"
 HASH_STORAGE_PATH = "./hashes/"
-REQUIRED_KEYS = ['TELEGRAM_TOKEN', 'TELEGRAM_CHAT_ID', 'GROUP_ID']
+REQUIRED_KEYS = ["TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID", "GROUP_ID"]
+OPTIONAL_KEYS = ["SES1", "SES2"]
 SECRETS_FILENAME = "secrets.json"
 
 
@@ -29,18 +31,40 @@ def load_secrets():
     else:
         with open(SECRETS_FILENAME, 'w') as secrets_file:
             secrets_file.write(json.dumps(
-                {key: "" for key in REQUIRED_KEYS},
+                {key: "" for key in REQUIRED_KEYS + OPTIONAL_KEYS},
                 separators=(',', ':')))
             print("The secrets.json file has been created. Please fill it in.")
             exit(1)
     return secrets
 
 
+def calculate_session_date():
+    if datetime.now().month == 1:
+        session_num = "SES1"
+    else:
+        session_num = "SES2"
+    if secrets[session_num] == "":
+        return [datetime.now(), datetime.now()]
+    return [datetime(day=int(secrets[session_num].split("_")[0][0:2]),
+                     month=int(secrets[session_num].split("_")[0][2:4]),
+                     year=int(secrets[session_num].split("_")[0][4:8]),
+                     ),
+            datetime(day=int(secrets[session_num].split("_")[1][0:2]),
+                     month=int(secrets[session_num].split("_")[1][2:4]),
+                     year=int(secrets[session_num].split("_")[1][4:8]),
+                     ),
+            ]
+
+
 # Функция для расчета двухнедельных интервалов
 def calculate_schedule_ranges(current_date=None):
     if current_date is None:
         current_date = datetime.now()
-
+    if current_date.month == 1 or current_date.month == 6 or current_date.month == 7:
+        # Время сессии
+        session_date = calculate_session_date()
+        if session_date[0] < current_date < session_date[1]:
+            return [session_date]
     # Базовая дата начала расписания
     base_date = datetime(2024, 9, 2)
 
@@ -127,7 +151,11 @@ async def check_schedule():
     date_ranges = calculate_schedule_ranges(today)
 
     for start_date, end_date in date_ranges:
-        url = f"{BASE_URL}_{secrets['GROUP_ID']}_{'1' if today.month > 7 else '2'}_{format_date(start_date)}_{format_date(end_date)}.pdf"
+        if 9 <= start_date.month <= 12 or len(date_ranges) == 1 and start_date.month == 1:
+            semester = '1'
+        else:
+            semester = '2'
+        url = f"{BASE_URL if len(date_ranges) == 2 else BASE_SES_URL}{secrets['GROUP_ID']}_{semester}_{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_name = f"{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
