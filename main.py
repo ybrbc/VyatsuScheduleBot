@@ -3,9 +3,10 @@ import os
 import hashlib
 import requests
 from datetime import datetime, timedelta
-from telegram import Bot
+from telegram import Bot, Update
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
+from telegram.ext import Application, CommandHandler, ContextTypes
 import asyncio
 from PyPDF2 import PdfReader
 
@@ -14,9 +15,12 @@ BASE_URL = "https://www.vyatsu.ru/reports/schedule/Group/"
 BASE_SES_URL = "https://www.vyatsu.ru/reports/schedule/Ses/"
 FILE_STORAGE_PATH = "./downloaded_files/"
 HASH_STORAGE_PATH = "./hashes/"
-REQUIRED_KEYS = ["TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID", "GROUP_ID"]
+REQUIRED_KEYS = ["TELEGRAM_TOKEN", "TELEGRAM_CHAT_ID", "GROUP_ID", "ADMIN_ID"]
 OPTIONAL_KEYS = ["SES1", "SES2"]
 SECRETS_FILENAME = "secrets.json"
+
+# Глобальная переменная для хранения даты последней проверки
+last_check_time = None
 
 
 def load_secrets():
@@ -31,7 +35,7 @@ def load_secrets():
     else:
         with open(SECRETS_FILENAME, 'w') as secrets_file:
             secrets_file.write(json.dumps(
-                {key: "" for key in REQUIRED_KEYS + OPTIONAL_KEYS},
+                {key: "" if key != "ADMIN_ID" else ["", ""] for key in REQUIRED_KEYS + OPTIONAL_KEYS},
                 separators=(',', ':')))
             print("The secrets.json file has been created. Please fill it in.")
             exit(1)
@@ -146,7 +150,8 @@ async def send_to_telegram(file_path, difference_text=None):
 
 
 # Основная функция проверки расписания
-async def check_schedule():
+async def check_schedule(debug=False):
+    global last_check_time
     today = datetime.now()
     date_ranges = calculate_schedule_ranges(today)
 
@@ -170,6 +175,12 @@ async def check_schedule():
                     old_hash = f.read()
                 if old_hash == new_hash:
                     print(f"Файл {file_name} не изменился.")
+                    if debug == True:
+                        bot = Bot(token=secrets['TELEGRAM_TOKEN'])
+                        await bot.send_message(
+                            chat_id=secrets['TELEGRAM_CHAT_ID'],
+                            text=f"Файл {file_name} не изменился.",
+                        )
                     continue
 
             # Сохраняем новый хэш
@@ -199,6 +210,41 @@ async def check_schedule():
             await send_to_telegram(old_text_path, difference_text)
         else:
             print(f"Не удалось скачать файл по ссылке: {url}")
+            if debug == True:
+                bot = Bot(token=secrets['TELEGRAM_TOKEN'])
+                await bot.send_message(
+                    chat_id=secrets['TELEGRAM_CHAT_ID'],
+                    text=f"Не удалось скачать файл по ссылке: {url}",
+                )
+
+    # Обновляем время последней проверки
+    last_check_time = datetime.now()
+
+
+# Проверка, является ли пользователь администратором
+def is_admin(user_id):
+    return str(user_id) in secrets["ADMIN_ID"]
+
+
+# Обработчик команды /ping
+async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return  # Не отвечаем, если пользователь не администратор
+    global last_check_time
+    if last_check_time:
+        last_check_str = last_check_time.strftime("%Y-%m-%d %H:%M:%S")
+    else:
+        last_check_str = "Проверка еще не выполнялась."
+    await update.message.reply_text(f"Pong! Бот активен.\nПоследняя проверка расписания: {last_check_str}")
+
+
+# Обработчик команды /update
+async def update_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_admin(update.message.from_user.id):
+        return  # Не отвечаем, если пользователь не администратор
+    await update.message.reply_text("Запуск проверки расписания...")
+    await check_schedule(True)
+    await update.message.reply_text("Проверка расписания завершена.")
 
 
 # Основной цикл приложения
@@ -207,6 +253,17 @@ async def main():
     os.makedirs(HASH_STORAGE_PATH, exist_ok=True)
     global secrets
     secrets = load_secrets()
+
+    # Создаем приложение и добавляем обработчики команд
+    application = Application.builder().token(secrets['TELEGRAM_TOKEN']).build()
+    application.add_handler(CommandHandler("ping", ping))
+    application.add_handler(CommandHandler("update", update_schedule))
+
+    # Запускаем приложение
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+
     while True:
         print(f"[{datetime.now()}] Запуск проверки расписания...")
         await check_schedule()
