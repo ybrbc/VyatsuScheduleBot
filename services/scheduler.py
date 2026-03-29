@@ -3,10 +3,11 @@ import os
 import hashlib
 import requests
 from datetime import datetime, timedelta
-import asyncio
 from telegram import Bot
 from telegram.constants import ParseMode
 from telegram.error import TelegramError
+from telegram.ext import ContextTypes
+from config import SECRETS
 
 from services.parser import extract_text_from_pdf, Day  # Day + PDF-парсер
 
@@ -17,7 +18,6 @@ FILE_STORAGE_PATH = "./storage/downloaded_files/"
 HASH_STORAGE_PATH = "./storage/hashes/"
 
 last_check_time = None
-secrets = None  # Подставляется из main.py
 
 
 # --- Скачивание файлов ---
@@ -41,17 +41,17 @@ def calculate_hash(file_path):
 
 # --- Отправка в Telegram ---
 async def send_to_telegram(file_path, difference_text=None):
-    bot = Bot(token=secrets['TELEGRAM_TOKEN'])
+    bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
     try:
         with open(file_path, "rb") as f:
             await bot.send_document(
-                chat_id=secrets['TELEGRAM_CHAT_ID'],
+                chat_id=SECRETS['TELEGRAM_CHAT_ID'],
                 document=f,
                 caption=str(calculate_hash(file_path))
             )
         if difference_text:
             await bot.send_message(
-                chat_id=secrets['TELEGRAM_CHAT_ID'],
+                chat_id=SECRETS['TELEGRAM_CHAT_ID'],
                 text=f"Изменения в расписании:\n\n{difference_text}",
                 parse_mode=ParseMode.HTML,
             )
@@ -67,11 +67,11 @@ def calculate_session_date():
     else:
         session_num = "SES2"
 
-    if not secrets.get(session_num):
+    if not SECRETS.get(session_num):
         now = datetime.now()
         return now, now
 
-    dates = secrets[session_num].split("_")
+    dates = SECRETS[session_num].split("_")
     start_str, end_str = dates[0], dates[1]
 
     session_start = datetime(
@@ -119,7 +119,7 @@ def format_date(date):
 
 
 # --- Основная проверка расписания ---
-async def check_schedule(app, debug=False):
+async def check_schedule(context : ContextTypes.DEFAULT_TYPE, debug=False):
     global last_check_time
     today = datetime.now()
 
@@ -135,7 +135,7 @@ async def check_schedule(app, debug=False):
             start_date, end_date = interval[0], interval[1]
 
         semester = '1' if (9 <= start_date.month <= 12) or (len(date_ranges) == 1 and start_date.month == 1) else '2'
-        url = f"{BASE_URL if len(date_ranges) == 2 else BASE_SES_URL}{secrets['GROUP_ID']}_{semester}_{format_date(start_date)}_{format_date(end_date)}.pdf"
+        url = f"{BASE_URL if len(date_ranges) == 2 else BASE_SES_URL}{SECRETS['GROUP_ID']}_{semester}_{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_name = f"{format_date(start_date)}_{format_date(end_date)}.pdf"
         file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
@@ -149,8 +149,8 @@ async def check_schedule(app, debug=False):
                 if old_hash == new_hash:
                     print(f"Файл {file_name} не изменился.")
                     if debug:
-                        bot = Bot(token=secrets['TELEGRAM_TOKEN'])
-                        await bot.send_message(chat_id=secrets['TELEGRAM_CHAT_ID'],
+                        bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
+                        await bot.send_message(chat_id=SECRETS['TELEGRAM_CHAT_ID'],
                                                text=f"Файл {file_name} не изменился.")
                     continue
 
@@ -179,10 +179,10 @@ async def check_schedule(app, debug=False):
         else:
             print(f"Не удалось скачать файл по ссылке: {url}")
             if debug:
-                bot = Bot(token=secrets['TELEGRAM_TOKEN'])
-                await bot.send_message(chat_id=secrets['TELEGRAM_CHAT_ID'],
+                bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
+                await bot.send_message(chat_id=SECRETS['TELEGRAM_CHAT_ID'],
                                        text=f"Не удалось скачать файл по ссылке: {url}")
 
     last_check_time = datetime.now()
-    app.bot_data["last_check_time"] = datetime.now()
+    context.bot_data["last_check_time"] = datetime.now()
     print("Следующая проверка расписания через 1 час")

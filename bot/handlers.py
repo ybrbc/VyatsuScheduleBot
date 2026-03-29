@@ -2,12 +2,10 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from services import scheduler
 from utils.user_utils import is_admin
-def is_admin(user_id, secrets):
-    return str(user_id) in secrets["ADMIN_ID"]
 
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, scheduler.secrets):
+    if not is_admin(update.message.from_user.id):
         return
     last_check = context.bot_data.get("last_check_time")
     if last_check:
@@ -18,8 +16,17 @@ async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def update_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_admin(update.message.from_user.id, scheduler.secrets):
+    if not is_admin(update.message.from_user.id):
         return
-    await update.message.reply_text("Запуск проверки расписания...")
-    await scheduler.check_schedule(context.application)
-    await update.message.reply_text("Проверка завершена.")
+
+    if context.bot_data.get("is_updating") == True:
+        await update.message.reply_text("Бот уже выполняет обновление.")
+        return
+
+    try:
+        context.bot_data["is_updating"] = True
+        await update.message.reply_text("Запуск проверки расписания...")
+        await scheduler.check_schedule(context)
+        await update.message.reply_text("Проверка завершена.")
+    finally:
+        context.bot_data["is_updating"] = False

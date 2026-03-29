@@ -1,33 +1,21 @@
-import asyncio
 from telegram.ext import Application, CommandHandler
 
-from config import load_secrets
+from config import SECRETS
 from bot.handlers import ping, update_schedule
 from services.scheduler import check_schedule
 
-from services import scheduler
 
-
-
-async def main():
-    secrets = load_secrets()
-
-    app = Application.builder().token(secrets["TELEGRAM_TOKEN"]).build()
-    app.bot_data["secrets"] = secrets
+def main():
+    app = Application.builder().token(SECRETS["TELEGRAM_TOKEN"]).build()
     app.bot_data["last_check_time"] = None
+    app.bot_data["is_updating"] = False
 
-    app.add_handler(CommandHandler("ping", ping))
-    app.add_handler(CommandHandler("update", update_schedule))
+    app.add_handler(CommandHandler("ping", ping, block=False))
+    app.add_handler(CommandHandler("update", update_schedule, block=False))
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
+    app.job_queue.run_repeating(check_schedule, interval=3600, first=1)
 
-    while True:
-        scheduler.secrets = secrets  # присваиваем глобально
-        await check_schedule(app)
-        await asyncio.sleep(3600)
-
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

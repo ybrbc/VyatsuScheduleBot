@@ -17,3 +17,5 @@ def load_secrets():
         raise FileNotFoundError("Fill secrets.json")
 
     return secrets
+
+SECRETS = load_secrets()

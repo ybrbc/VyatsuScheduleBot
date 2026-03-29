@@ -2,3 +2,4 @@ requests~=2.33.0
 python-telegram-bot~=22.7
 httpx~=0.28.1
 camelot-py~=1.0.9
+APScheduler~=3.11.2
