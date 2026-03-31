@@ -13,14 +13,14 @@ __pycache__/
 # =========================
 # Virtual environments
 # =========================
-.venv/
-venv/
-env/
+/.venv/
+/venv/
+/env/
 
 # =========================
 # IDE (PyCharm)
 # =========================
-.idea/
+/.idea/
 
 # =========================
 # OS garbage
@@ -47,8 +47,9 @@ secrets.json
 # =========================
 # Bot runtime data
 # =========================
-storage/downloaded_files
-storage/hashes
+/storage/downloaded_files
+/storage/hashes
+
 # =========================
 # Cache pip / builds
 # =========================
