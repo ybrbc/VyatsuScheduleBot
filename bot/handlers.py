@@ -8,6 +8,7 @@ from services import scheduler
 from services.parser import extract_text_from_pdf
 from services.scheduler import calculate_schedule_ranges, get_filename, FILE_STORAGE_PATH
 from utils.user_utils import is_admin, send_long_message
+from utils.formatter import format_output
 
 
 async def ping(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -48,6 +49,6 @@ async def print_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     file_name = await get_filename(end_date, start_date)
     file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
-    text = extract_text_from_pdf(file_path)
+    text = format_output(extract_text_from_pdf(file_path))
     await send_long_message(context.bot, update.message.from_user.id,  text, ParseMode.MARKDOWN_V2, "```json\n")
     return

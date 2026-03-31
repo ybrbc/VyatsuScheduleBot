@@ -1,4 +1,3 @@
-import json
 from datetime import datetime
 import camelot
 
@@ -23,6 +22,10 @@ class Day:
 
 # Извлечение текста из PDF
 def extract_text_from_pdf(file_path):
+
+    days_in_week = ("понедельник", "вторник", "среда", "четверг",
+                    "пятница", "суббота", "воскресенье")
+
     def parse_day_string(day_str: str):
         parts = day_str.strip().split()
         if len(parts) >= 2:
@@ -45,10 +48,7 @@ def extract_text_from_pdf(file_path):
             day_cell, time_cell, subj_cell = row[0], row[1], row[2]
 
             # Начало нового дня
-            if day_cell.lower().startswith((
-                    "понедельник", "вторник", "среда", "четверг",
-                    "пятница", "суббота", "воскресенье"
-            )):
+            if isinstance(day_cell, str) and day_cell.lower().startswith(days_in_week):
                 # Сохраняем предыдущий день
                 if current_day:
                     days.append(current_day.to_dict())
@@ -87,4 +87,4 @@ def extract_text_from_pdf(file_path):
         ]
     else:
         output = [{"days": days}]
-    return json.dumps(output, ensure_ascii=False, indent=2)
+    return output

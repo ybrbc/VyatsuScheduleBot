@@ -9,7 +9,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from config import SECRETS
 
-from services.parser import extract_text_from_pdf, Day  # Day + PDF-парсер
+from services.parser import extract_text_from_pdf  # Day + PDF-парсер
 
 # Настройки путей и URL
 BASE_URL = "https://www.vyatsu.ru/reports/schedule/Group/"
