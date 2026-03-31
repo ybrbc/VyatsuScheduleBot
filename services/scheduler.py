@@ -134,9 +134,9 @@ async def check_schedule(context : ContextTypes.DEFAULT_TYPE, debug=False):
         else:
             start_date, end_date = interval[0], interval[1]
 
-        semester = '1' if (9 <= start_date.month <= 12) or (len(date_ranges) == 1 and start_date.month == 1) else '2'
-        url = f"{BASE_URL if len(date_ranges) == 2 else BASE_SES_URL}{SECRETS['GROUP_ID']}_{semester}_{format_date(start_date)}_{format_date(end_date)}.pdf"
-        file_name = f"{format_date(start_date)}_{format_date(end_date)}.pdf"
+        semester = await get_semester(date_ranges, start_date)
+        url = await get_url(date_ranges, end_date, semester, start_date)
+        file_name = await get_filename(end_date, start_date)
         file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
         if download_file(url, file_path):
@@ -186,3 +186,18 @@ async def check_schedule(context : ContextTypes.DEFAULT_TYPE, debug=False):
     last_check_time = datetime.now()
     context.bot_data["last_check_time"] = datetime.now()
     print("Следующая проверка расписания через 1 час")
+
+
+async def get_filename(end_date, start_date):
+    file_name = f"{format_date(start_date)}_{format_date(end_date)}.pdf"
+    return file_name
+
+
+async def get_url(date_ranges, end_date, semester, start_date):
+    url = f"{BASE_URL if len(date_ranges) == 2 else BASE_SES_URL}{SECRETS['GROUP_ID']}_{semester}_{format_date(start_date)}_{format_date(end_date)}.pdf"
+    return url
+
+
+async def get_semester(date_ranges, start_date):
+    semester = '1' if (9 <= start_date.month <= 12) or (len(date_ranges) == 1 and start_date.month == 1) else '2'
+    return semester

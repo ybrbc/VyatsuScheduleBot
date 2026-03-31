@@ -1,7 +1,7 @@
 from telegram.ext import Application, CommandHandler
 
 from config import SECRETS
-from bot.handlers import ping, update_schedule
+from bot.handlers import ping, update_schedule, print_schedule
 from services.scheduler import check_schedule
 
 
@@ -12,6 +12,7 @@ def main():
 
     app.add_handler(CommandHandler("ping", ping, block=False))
     app.add_handler(CommandHandler("update", update_schedule, block=False))
+    app.add_handler(CommandHandler("print", print_schedule, block=False))
 
     app.job_queue.run_repeating(check_schedule, interval=3600, first=1)
 
