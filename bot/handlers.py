@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.constants import ParseMode
 from services import scheduler
-from services.parser import extract_text_from_pdf
+from services.parser import load_schedule_from_json
 from services.scheduler import calculate_schedule_ranges, get_filename, FILE_STORAGE_PATH
 from utils.user_utils import is_admin, send_long_message
 from utils.formatter import format_output
@@ -43,12 +43,6 @@ async def print_schedule(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not is_admin(update.message.from_user.id):
         return
 
-    date_ranges = calculate_schedule_ranges(datetime.now())[0]
-
-    start_date, end_date = date_ranges[0], date_ranges[1]
-    file_name = await get_filename(end_date, start_date)
-    file_path = os.path.join(FILE_STORAGE_PATH, file_name)
-
-    text = format_output(extract_text_from_pdf(file_path))
+    text = format_output(load_schedule_from_json("current.json"))
     await send_long_message(context.bot, update.message.from_user.id,  text, ParseMode.MARKDOWN_V2, "```json\n")
     return

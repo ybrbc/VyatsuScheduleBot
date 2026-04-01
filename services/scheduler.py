@@ -1,6 +1,4 @@
-# services/scheduler.py
 import os
-import hashlib
 import requests
 from datetime import datetime, timedelta
 from telegram import Bot
@@ -9,18 +7,18 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 from config import SECRETS
 
-from services.parser import extract_text_from_pdf  # Day + PDF-парсер
+from services.parser import extract_text_from_pdf, load_schedule_from_json
+from services.diff import get_diff
+from utils.formatter import format_output
 
-# Настройки путей и URL
 BASE_URL = "https://www.vyatsu.ru/reports/schedule/Group/"
 BASE_SES_URL = "https://www.vyatsu.ru/reports/schedule/Ses/"
 FILE_STORAGE_PATH = "./storage/downloaded_files/"
-HASH_STORAGE_PATH = "./storage/hashes/"
+FILE_PARSED_PATH = "./storage/parsed/"
 
 last_check_time = None
 
 
-# --- Скачивание файлов ---
 def download_file(url, save_path):
     response = requests.get(url, stream=True)
     if response.status_code == 200:
@@ -30,16 +28,6 @@ def download_file(url, save_path):
     return False
 
 
-# --- Хэширование файла ---
-def calculate_hash(file_path):
-    hasher = hashlib.md5()
-    with open(file_path, "rb") as f:
-        for chunk in iter(lambda: f.read(4096), b""):
-            hasher.update(chunk)
-    return hasher.hexdigest()
-
-
-# --- Отправка в Telegram ---
 async def send_to_telegram(file_path, difference_text=None):
     bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
     try:
@@ -47,7 +35,6 @@ async def send_to_telegram(file_path, difference_text=None):
             await bot.send_document(
                 chat_id=SECRETS['TELEGRAM_CHAT_ID'],
                 document=f,
-                caption=str(calculate_hash(file_path))
             )
         if difference_text:
             await bot.send_message(
@@ -118,7 +105,6 @@ def format_date(date):
     return date.strftime("%d%m%Y")
 
 
-# --- Основная проверка расписания ---
 async def check_schedule(context : ContextTypes.DEFAULT_TYPE, debug=False):
     global last_check_time
     today = datetime.now()
@@ -140,41 +126,27 @@ async def check_schedule(context : ContextTypes.DEFAULT_TYPE, debug=False):
         file_path = os.path.join(FILE_STORAGE_PATH, file_name)
 
         if download_file(url, file_path):
-            new_hash = calculate_hash(file_path)
-            hash_file_path = os.path.join(HASH_STORAGE_PATH, f"{file_name}.hash")
+            prev_file_path = f"{FILE_PARSED_PATH}previous.json"
+            if os.path.exists(prev_file_path):
+                os.remove(prev_file_path)
+            os.rename(f"{FILE_PARSED_PATH}current.json", prev_file_path)
+            new_text = extract_text_from_pdf(file_path, "current.json")
 
-            if os.path.exists(hash_file_path):
-                with open(hash_file_path, "r") as f:
-                    old_hash = f.read()
-                if old_hash == new_hash:
-                    print(f"Файл {file_name} не изменился.")
-                    if debug:
-                        bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
-                        await bot.send_message(chat_id=SECRETS['TELEGRAM_CHAT_ID'],
-                                               text=f"Файл {file_name} не изменился.")
-                    continue
-
-            with open(hash_file_path, "w") as f:
-                f.write(new_hash)
-
-            new_text = extract_text_from_pdf(file_path)
-            old_text_path = os.path.join(FILE_STORAGE_PATH, f"previous_{file_name}")
-            difference_text = None
-
-            if os.path.exists(old_text_path):
-                old_text = extract_text_from_pdf(old_text_path)
+            if os.path.exists(prev_file_path):
+                old_text = load_schedule_from_json("previous.json")
                 if old_text and new_text:
-                    old_lines = set(old_text.splitlines())
-                    new_lines = set(new_text.splitlines())
-                    difference_text = "\n".join(new_lines - old_lines)
+                    difference = get_diff(old_text, new_text)
 
-            try:
-                os.rename(file_path, old_text_path)
-            except FileExistsError:
-                os.remove(old_text_path)
-                os.rename(file_path, old_text_path)
+            if not difference:
+                print(f"Файл {file_name} не изменился.")
+                if debug:
+                    bot = Bot(token=SECRETS['TELEGRAM_TOKEN'])
+                    await bot.send_message(chat_id=SECRETS['TELEGRAM_CHAT_ID'],
+                                           text=f"Файл {file_name} не изменился.")
+                continue
 
-            await send_to_telegram(old_text_path, difference_text)
+            old_text_path = os.path.join(FILE_STORAGE_PATH, f"previous_{file_name}")
+            await send_to_telegram(old_text_path, format_output(difference))
 
         else:
             print(f"Не удалось скачать файл по ссылке: {url}")

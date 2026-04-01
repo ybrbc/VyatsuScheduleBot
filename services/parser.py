@@ -1,10 +1,10 @@
 from datetime import datetime
 import camelot
+import json
 
 class Day:
     def __init__(self, date: datetime):
         self.date = date
-        # schedule: {time_slot: [subjects...]}
         self.schedule = {}
 
     def add_lesson(self, time_slot: str, subject: str):
@@ -21,7 +21,7 @@ class Day:
 
 
 # Извлечение текста из PDF
-def extract_text_from_pdf(file_path):
+def extract_text_from_pdf(file_path, filename):
 
     days_in_week = ("понедельник", "вторник", "среда", "четверг",
                     "пятница", "суббота", "воскресенье")
@@ -76,7 +76,6 @@ def extract_text_from_pdf(file_path):
         days.append(current_day.to_dict())
 
     # Разбивка на две недели, если нужно
-    output = []
     if len(days) >= 14:
         # 7 дней в неделю
         week1 = days[:7]
@@ -87,4 +86,21 @@ def extract_text_from_pdf(file_path):
         ]
     else:
         output = [{"days": days}]
+    with open(f"storage/parsed/{filename}", "w", encoding="utf-8") as f:
+        json.dump(output, f, ensure_ascii=False, indent=2)
+
     return output
+
+
+def load_schedule_from_json(file_name):
+    file_path = f"storage/parsed/{file_name}"
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data
+    except FileNotFoundError:
+        print(f"Файл не найден: {file_path}")
+        return None
+    except json.JSONDecodeError as e:
+        print(f"Ошибка чтения JSON: {e}")
+        return None
