@@ -1,0 +1,15 @@
+secrets.json
+__pycache__/
+*.pyc
+*.pyo
+.env
+storage/downloaded_files/*.pdf
+storage/logs/*.log
+storage/parsed/
+storage/hashes/
+.idea/
+.vscode/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
