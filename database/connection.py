@@ -10,9 +10,12 @@ Usage (async via thread):
     result = await asyncio.to_thread(sync_function, args)
 """
 import logging
+import os
 from contextlib import contextmanager
 from typing import Generator
 
+from alembic import command
+from alembic.config import Config
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -22,6 +25,27 @@ logger = logging.getLogger(__name__)
 
 _engine = None
 _SessionFactory = None
+
+
+def _run_migrations() -> None:
+    """Apply all schema migrations using the already configured engine.
+
+    ``create_all`` below handles a brand-new database. Alembic then upgrades
+    an existing database (including the V1 schema) without relying on manual
+    SQL during deployment.
+    """
+    if _engine is None:
+        raise RuntimeError("Database engine is not initialised")
+
+    project_root = os.path.dirname(os.path.dirname(__file__))
+    config = Config(os.path.join(project_root, "alembic.ini"))
+    config.set_main_option("script_location", os.path.join(project_root, "migrations"))
+
+    # Pass the current connection so Alembic shares this engine's settings and
+    # applies the revision atomically on PostgreSQL.
+    with _engine.begin() as connection:
+        config.attributes["connection"] = connection
+        command.upgrade(config, "head")
 
 
 def init_db(database_url: str) -> None:
@@ -48,7 +72,10 @@ def init_db(database_url: str) -> None:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
 
+    # ``create_all`` intentionally does not alter existing tables. The
+    # subsequent Alembic step contains those V1 -> V2 alterations.
     Base.metadata.create_all(_engine)
+    _run_migrations()
     _SessionFactory = sessionmaker(bind=_engine, expire_on_commit=False)
     logger.info("Database initialised: %s", database_url.split("@")[-1])
 
