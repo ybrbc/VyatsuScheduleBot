@@ -1,19 +1,11 @@
-"""SQLAlchemy ORM models — source of truth for the database schema.
-
-Tables:
-  groups, teachers, subjects, rooms, time_slots
-  schedule_periods, schedule_days, lessons
-  pdf_hashes, schedule_changes
-  users, excluded_subjects
-"""
+"""SQLAlchemy ORM models."""
 from __future__ import annotations
 from datetime import date, time, datetime
 from typing import Optional, List
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime, Enum,
-    ForeignKey, Integer, JSON, String, Text, Time,
-    UniqueConstraint, func,
+    BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
+    Integer, JSON, String, Text, Time, UniqueConstraint, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -22,10 +14,6 @@ class Base(DeclarativeBase):
     pass
 
 
-# ---------------------------------------------------------------------------
-# Reference tables
-# ---------------------------------------------------------------------------
-
 class Group(Base):
     __tablename__ = "groups"
 
@@ -33,6 +21,7 @@ class Group(Base):
     external_id: Mapped[str] = mapped_column(String(20), nullable=False, unique=True)
     name: Mapped[Optional[str]] = mapped_column(String(100))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_check_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     periods: Mapped[List["SchedulePeriod"]] = relationship(back_populates="group")
@@ -52,12 +41,8 @@ class Teacher(Base):
 
     subjects: Mapped[List["Subject"]] = relationship(back_populates="teacher")
 
-    def __repr__(self) -> str:
-        return f"<Teacher {self.full_name}>"
-
 
 class Subject(Base):
-    """Stable lesson identity: what is taught, by whom, for which subgroup."""
     __tablename__ = "subjects"
     __table_args__ = (
         UniqueConstraint("title", "lesson_type", "teacher_id", "subgroup", name="uq_subject"),
@@ -67,15 +52,12 @@ class Subject(Base):
     title: Mapped[Optional[str]] = mapped_column(String(300))
     lesson_type: Mapped[Optional[str]] = mapped_column(String(50))
     teacher_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("teachers.id"))
-    subgroup: Mapped[Optional[str]] = mapped_column(String(10))  # "01", "02", None
+    subgroup: Mapped[Optional[str]] = mapped_column(String(10))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     teacher: Mapped[Optional["Teacher"]] = relationship(back_populates="subjects")
     lessons: Mapped[List["Lesson"]] = relationship(back_populates="subject")
     excluded_by: Mapped[List["ExcludedSubject"]] = relationship(back_populates="subject")
-
-    def __repr__(self) -> str:
-        return f"<Subject {self.title} / {self.lesson_type}>"
 
 
 class Room(Base):
@@ -86,9 +68,6 @@ class Room(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     lessons: Mapped[List["Lesson"]] = relationship(back_populates="room")
-
-    def __repr__(self) -> str:
-        return f"<Room {self.name}>"
 
 
 class TimeSlot(Base):
@@ -107,16 +86,8 @@ class TimeSlot(Base):
     def label(self) -> str:
         return f"{self.start_time.strftime('%H:%M')}–{self.end_time.strftime('%H:%M')}"
 
-    def __repr__(self) -> str:
-        return f"<TimeSlot {self.label}>"
-
-
-# ---------------------------------------------------------------------------
-# Schedule tables
-# ---------------------------------------------------------------------------
 
 class SchedulePeriod(Base):
-    """A biweekly (or session) period for a specific group."""
     __tablename__ = "schedule_periods"
     __table_args__ = (
         UniqueConstraint("group_id", "start_date", "end_date", name="uq_period"),
@@ -126,8 +97,8 @@ class SchedulePeriod(Base):
     group_id: Mapped[int] = mapped_column(Integer, ForeignKey("groups.id"), nullable=False)
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
     end_date: Mapped[date] = mapped_column(Date, nullable=False)
-    semester: Mapped[int] = mapped_column(Integer, nullable=False)  # 1 or 2
-    academic_year: Mapped[Optional[str]] = mapped_column(String(10))  # "2026-2027"
+    semester: Mapped[int] = mapped_column(Integer, nullable=False)
+    academic_year: Mapped[Optional[str]] = mapped_column(String(10))
     is_session: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -138,9 +109,6 @@ class SchedulePeriod(Base):
     days: Mapped[List["ScheduleDay"]] = relationship(
         back_populates="period", cascade="all, delete-orphan", lazy="select"
     )
-
-    def __repr__(self) -> str:
-        return f"<Period {self.start_date}–{self.end_date} group={self.group_id}>"
 
 
 class ScheduleDay(Base):
@@ -161,12 +129,8 @@ class ScheduleDay(Base):
         back_populates="day", cascade="all, delete-orphan"
     )
 
-    def __repr__(self) -> str:
-        return f"<Day {self.date}>"
-
 
 class Lesson(Base):
-    """One concrete lesson: when, where, what."""
     __tablename__ = "lessons"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -176,7 +140,7 @@ class Lesson(Base):
     time_slot_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("time_slots.id"))
     subject_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("subjects.id"))
     room_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("rooms.id"))
-    raw_text: Mapped[Optional[str]] = mapped_column(Text)  # original unparsed string
+    raw_text: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     day: Mapped["ScheduleDay"] = relationship(back_populates="lessons")
@@ -184,13 +148,6 @@ class Lesson(Base):
     subject: Mapped[Optional["Subject"]] = relationship(back_populates="lessons")
     room: Mapped[Optional["Room"]] = relationship(back_populates="lessons")
 
-    def __repr__(self) -> str:
-        return f"<Lesson day={self.day_id} slot={self.time_slot_id}>"
-
-
-# ---------------------------------------------------------------------------
-# Hash tracking
-# ---------------------------------------------------------------------------
 
 class PdfHash(Base):
     __tablename__ = "pdf_hashes"
@@ -208,10 +165,6 @@ class PdfHash(Base):
     group: Mapped["Group"] = relationship(back_populates="pdf_hashes")
 
 
-# ---------------------------------------------------------------------------
-# Change history
-# ---------------------------------------------------------------------------
-
 class ScheduleChange(Base):
     __tablename__ = "schedule_changes"
 
@@ -224,21 +177,32 @@ class ScheduleChange(Base):
     detected_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-# ---------------------------------------------------------------------------
-# Users
-# ---------------------------------------------------------------------------
-
 class User(Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     telegram_id: Mapped[int] = mapped_column(BigInteger, nullable=False, unique=True)
     group_id: Mapped[Optional[int]] = mapped_column(Integer, ForeignKey("groups.id"))
-    subgroup: Mapped[Optional[str]] = mapped_column(String(10))  # "01","02",None=all
+    subgroup: Mapped[Optional[str]] = mapped_column(String(10))   # "01","02", None=all
+
+    # Notifications
     change_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_notifications: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_time: Mapped[Optional[time]] = mapped_column(Time)
-    display_mode: Mapped[str] = mapped_column(String(20), default="hide")
+    last_daily_sent: Mapped[Optional[date]] = mapped_column(Date)
+
+    # Display: how to render lessons of the OTHER subgroup
+    # hide | strikethrough | spoiler | spoiler_strikethrough
+    display_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="hide", server_default="hide"
+    )
+
+    # Display for OTHER subgroup's diff changes in notifications
+    # hide | inline_strikethrough | inline_spoiler | separate
+    diff_display_mode: Mapped[str] = mapped_column(
+        String(30), nullable=False, default="hide", server_default="hide"
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
@@ -248,9 +212,6 @@ class User(Base):
     excluded_subjects: Mapped[List["ExcludedSubject"]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )
-
-    def __repr__(self) -> str:
-        return f"<User tg={self.telegram_id}>"
 
 
 class ExcludedSubject(Base):

@@ -1,8 +1,4 @@
-"""Schedule service: retrieve schedule data for users.
-
-All methods return DaySchedule lists (domain objects) suitable for formatting.
-They run synchronously; call via asyncio.to_thread() from async contexts.
-"""
+"""Schedule service: retrieve lessons from DB as domain objects."""
 from __future__ import annotations
 import logging
 from datetime import date, timedelta
@@ -18,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 
 def _lesson_to_domain(lesson: Lesson) -> LessonData:
-    subj: Optional[Subject] = lesson.subject
-    slot: Optional[TimeSlot] = lesson.time_slot
+    subj = lesson.subject
+    slot = lesson.time_slot
     return LessonData(
         raw=lesson.raw_text or "",
         title=subj.title if subj else None,
@@ -33,7 +29,6 @@ def _lesson_to_domain(lesson: Lesson) -> LessonData:
 
 
 def _group_into_days(lessons: list[Lesson]) -> list[DaySchedule]:
-    """Convert a flat lesson list to DaySchedule objects, grouped by date."""
     day_map: dict[date, DaySchedule] = {}
     for l in lessons:
         d = l.day.date
@@ -43,12 +38,7 @@ def _group_into_days(lessons: list[Lesson]) -> list[DaySchedule]:
     return [day_map[d] for d in sorted(day_map)]
 
 
-# ---------------------------------------------------------------------------
-# Public API
-# ---------------------------------------------------------------------------
-
 def get_today(group_id: int, target_date: Optional[date] = None) -> list[DaySchedule]:
-    """Return lessons for today (or *target_date*)."""
     if target_date is None:
         target_date = date.today()
     with get_session() as session:
@@ -61,28 +51,21 @@ def get_tomorrow(group_id: int) -> list[DaySchedule]:
 
 
 def get_week(group_id: int, start: Optional[date] = None) -> list[DaySchedule]:
-    """Return lessons for the current Mon–Sun week."""
     if start is None:
         today = date.today()
-        start = today - timedelta(days=today.weekday())  # Monday
-    end = start + timedelta(days=6)  # Sunday
+        start = today - timedelta(days=today.weekday())
+    end = start + timedelta(days=6)
     with get_session() as session:
         lessons = sr.get_lessons_for_date_range(session, group_id, start, end)
     return _group_into_days(lessons)
 
 
 def get_two_weeks(group_id: int) -> list[DaySchedule]:
-    """Return lessons for the next 14 calendar days from today."""
     start = date.today()
     end = start + timedelta(days=13)
     with get_session() as session:
         lessons = sr.get_lessons_for_date_range(session, group_id, start, end)
     return _group_into_days(lessons)
-
-
-def get_group_by_external_id(external_id: str):
-    with get_session() as session:
-        return gr.get_by_external_id(session, external_id)
 
 
 def get_all_active_groups():
