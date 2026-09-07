@@ -80,6 +80,8 @@ def normalize_lesson(
     if not text:
         return LessonData(raw=raw, start_time=start_time, end_time=end_time)
 
+    text = re.sub(r"\s*-\s*", "-", text) # normalise room
+
     # --- Find lesson type ---
     lesson_type: Optional[str] = None
     type_pos = -1

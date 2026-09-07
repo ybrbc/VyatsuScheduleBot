@@ -189,19 +189,17 @@ class User(Base):
     change_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     daily_notifications: Mapped[bool] = mapped_column(Boolean, default=False)
     daily_time: Mapped[Optional[time]] = mapped_column(Time)
+    # True → send tomorrow's schedule at notification time; False → send today's
+    daily_send_tomorrow: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     last_daily_sent: Mapped[Optional[date]] = mapped_column(Date)
 
     # Display: how to render lessons of the OTHER subgroup
     # hide | strikethrough | spoiler | spoiler_strikethrough
-    display_mode: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="hide", server_default="hide"
-    )
+    display_mode: Mapped[str] = mapped_column(String(30), default="hide")
 
     # Display for OTHER subgroup's diff changes in notifications
     # hide | inline_strikethrough | inline_spoiler | separate
-    diff_display_mode: Mapped[str] = mapped_column(
-        String(30), nullable=False, default="hide", server_default="hide"
-    )
+    diff_display_mode: Mapped[str] = mapped_column(String(30), default="hide")
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -229,3 +227,68 @@ class ExcludedSubject(Base):
 
     user: Mapped["User"] = relationship(back_populates="excluded_subjects")
     subject: Mapped["Subject"] = relationship(back_populates="excluded_by")
+
+
+class UserSubjectFilter(Base):
+    """Per-user filter for a specific Subject row (keyed by subject_id).
+
+    filter_type:
+      always_show — show even if other-subgroup / display_mode would hide it.
+      never_show  — always hide, even for the user's own subgroup.
+
+    Because each Subject row encodes title + lesson_type + teacher + subgroup,
+    users can independently filter e.g. "Элективные / пд.01 / Полубоярцев"
+    without affecting "Элективные / пд.01 / Крестьянинова".
+    """
+    __tablename__ = "user_subject_filters"
+    __table_args__ = (
+        UniqueConstraint("user_id", "subject_id", name="uq_usr_sbj_filter"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    subject_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False
+    )
+    filter_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.now)
+
+    user: Mapped["User"] = relationship(back_populates="subject_filters")
+    subject: Mapped["Subject"] = relationship()
+
+
+# Add back-reference to User
+User.subject_filters = relationship(   # type: ignore[attr-defined]
+    "UserSubjectFilter", back_populates="user", cascade="all, delete-orphan"
+)
+
+
+class DailyNotificationLog(Base):
+    """Tracks which schedule date was sent to each user on each calendar day.
+
+    Used to resend the updated schedule if the target date's lessons change
+    after the initial notification was delivered.
+    """
+    __tablename__ = "daily_notification_logs"
+    __table_args__ = (
+        UniqueConstraint(
+            "user_id", "target_date", "notification_date",
+            name="uq_daily_log",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+    # The date whose schedule was sent (today or tomorrow at send time)
+    target_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # Calendar date the notification was dispatched
+    notification_date: Mapped[date] = mapped_column(Date, nullable=False)
+    sent_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    # Updated each time we resend; None = never resent
+    last_resent_at: Mapped[Optional[datetime]] = mapped_column(DateTime)
+
+    user: Mapped["User"] = relationship()

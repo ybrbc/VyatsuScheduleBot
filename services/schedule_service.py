@@ -9,6 +9,7 @@ from database.models import Lesson, Subject, TimeSlot
 from models.domain import DaySchedule, LessonData
 from repositories import schedule_repository as sr
 from repositories import group_repository as gr
+from utils.formatter import SubjectFilters, has_visible_lessons
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ def _lesson_to_domain(lesson: Lesson) -> LessonData:
         subgroup=subj.subgroup if subj else None,
         start_time=slot.start_time if slot else None,
         end_time=slot.end_time if slot else None,
+        subject_id=lesson.subject_id if lesson else None,
     )
 
 
@@ -67,7 +69,34 @@ def get_two_weeks(group_id: int) -> list[DaySchedule]:
         lessons = sr.get_lessons_for_date_range(session, group_id, start, end)
     return _group_into_days(lessons)
 
-
-def get_all_active_groups():
+def get_next_week(group_id: int, start: Optional[date] = None) -> list[DaySchedule]:
+    if start is None:
+        today = date.today()
+        start = today - timedelta(days=today.weekday() - 7)
+    end = start + timedelta(days=6)
     with get_session() as session:
-        return gr.get_active(session)
+        lessons = sr.get_lessons_for_date_range(session, group_id, start, end)
+    return _group_into_days(lessons)
+
+
+def get_next_lessons_day(
+    group_id: int,
+    from_date: date,
+    user_subgroup: Optional[str] = None,
+    display_mode: str = "hide",
+    filters: Optional[SubjectFilters] = None,
+    max_days: int = 21,
+) -> Optional[DaySchedule]:
+    """Find the nearest future day (after from_date) that has visible lessons."""
+    for i in range(1, max_days + 1):
+        target = from_date + timedelta(days=i)
+        days = get_today(group_id, target_date=target)
+        if days and has_visible_lessons(days[0], user_subgroup, display_mode, filters):
+            return days[0]
+    return None
+
+
+def get_unique_subjects(group_id: int) -> list[tuple[str, Optional[str]]]:
+    """Return distinct (title, lesson_type) pairs for a group's schedule."""
+    with get_session() as session:
+        return sr.get_unique_subjects_for_group(session, group_id)

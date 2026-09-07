@@ -1,7 +1,8 @@
-"""Notification service: send change alerts to subscribed users."""
+"""Notification service: send change alerts + trigger daily resends."""
 from __future__ import annotations
 import logging
-from typing import Optional
+from datetime import date
+from typing import TYPE_CHECKING
 
 from telegram import Bot
 from telegram.constants import ParseMode
@@ -12,6 +13,9 @@ from models.domain import ScheduleChange
 from repositories import user_repository as ur
 from utils.formatter import fmt_changes
 
+if TYPE_CHECKING:
+    pass
+
 logger = logging.getLogger(__name__)
 
 
@@ -20,17 +24,18 @@ async def notify_group_users(
     group_id: int,
     changes: list[ScheduleChange],
 ) -> int:
-    """Send personalised change notifications to all subscribed users of *group_id*.
-    Returns number of successfully notified users.
+    """Send personalised change diff notifications to subscribed users.
+
+    Also triggers a resend of the daily schedule for users who already
+    received a daily notification for any of the changed dates.
+
+    Returns the number of successfully notified users.
     """
     if not changes:
         return 0
 
     with get_session() as session:
         users = ur.get_subscribed_users(session, group_id)
-
-    if not users:
-        return 0
 
     notified = 0
     for user in users:
@@ -56,4 +61,12 @@ async def notify_group_users(
             logger.warning("Failed to notify user %s: %s", user.telegram_id, exc)
 
     logger.info("Notified %d/%d users for group_id=%s", notified, len(users), group_id)
+
+    # Resend updated daily schedule to users whose daily notification
+    # was already sent today for one of the changed dates.
+    changed_dates: set[date] = {ch.lesson_date for ch in changes}
+    if changed_dates:
+        from bot.handlers.daily import resend_for_changed_dates
+        await resend_for_changed_dates(bot, group_id, changed_dates)
+
     return notified

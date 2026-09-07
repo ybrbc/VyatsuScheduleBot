@@ -99,3 +99,66 @@ def get_daily_users(session: Session) -> list[User]:
         .options(joinedload(User.group))
         .all()
     )
+
+
+# ---------------------------------------------------------------------------
+# Subject filters  (keyed by subject_id)
+# ---------------------------------------------------------------------------
+
+from database.models import UserSubjectFilter
+
+
+def get_subject_filters(session: Session, telegram_id: int) -> list[UserSubjectFilter]:
+    user = get_by_telegram_id(session, telegram_id)
+    if not user:
+        return []
+    return (
+        session.query(UserSubjectFilter)
+        .filter_by(user_id=user.id)
+        .all()
+    )
+
+
+def get_filters_dict(session: Session, telegram_id: int) -> dict[int, str]:
+    """Return {subject_id: filter_type} for O(1) lookup in the formatter."""
+    rows = get_subject_filters(session, telegram_id)
+    return {r.subject_id: r.filter_type for r in rows}
+
+
+def set_subject_filter(
+    session: Session, telegram_id: int, subject_id: int, filter_type: str,
+) -> None:
+    user, _ = get_or_create(session, telegram_id)
+    existing = (
+        session.query(UserSubjectFilter)
+        .filter_by(user_id=user.id, subject_id=subject_id)
+        .first()
+    )
+    if existing:
+        existing.filter_type = filter_type
+    else:
+        session.add(UserSubjectFilter(
+            user_id=user.id, subject_id=subject_id, filter_type=filter_type,
+        ))
+    session.flush()
+
+
+def delete_subject_filter(session: Session, filter_id: int, telegram_id: int) -> bool:
+    user = get_by_telegram_id(session, telegram_id)
+    if not user:
+        return False
+    row = session.query(UserSubjectFilter).filter_by(id=filter_id, user_id=user.id).first()
+    if row:
+        session.delete(row)
+        session.flush()
+        return True
+    return False
+
+
+def set_daily_send_tomorrow(
+    session: Session, telegram_id: int, enabled: bool
+) -> User:
+    user, _ = get_or_create(session, telegram_id)
+    user.daily_send_tomorrow = enabled
+    session.flush()
+    return user
