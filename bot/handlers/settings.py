@@ -1,19 +1,4 @@
-"""Settings handler — all navigation edits a single inline message in-place.
-
-Callback pattern: "st:{action}" or "st:{action}:{value}"
-  st:home           → show main settings screen
-  st:subgroup       → show subgroup selection
-  st:set_sg:{val}   → set subgroup, return to home
-  st:display        → show display-mode screen
-  st:set_dm:{mode}  → set display mode, return to home
-  st:diff_display   → show diff-display-mode screen
-  st:set_ddm:{mode} → set diff display mode, return to home
-  st:toggle_notif   → toggle change_notifications, return to home
-  st:daily_time     → show time picker
-  st:set_dt:{time}  → set daily time (HH:MM or "off"), return to home
-  st:custom_time    → ask user to type a time, save state
-  st:change_group   → show group selection
-"""
+"""Settings handler — all navigation edits a single inline message in-place."""
 from __future__ import annotations
 import asyncio
 import logging
@@ -34,32 +19,32 @@ from repositories import group_repository as gr
 from repositories import user_repository as ur
 
 logger = logging.getLogger(__name__)
-
 _TIME_RE = re.compile(r"^(\d{1,2}):(\d{2})$")
 
 
-# ---------------------------------------------------------------------------
-# Public: build settings text + keyboard (used by other handlers too)
-# ---------------------------------------------------------------------------
-
 def _build_settings_msg(tg_id: int):
-    """Synchronous — call via asyncio.to_thread from async contexts."""
     with get_session() as s:
         user, _ = ur.get_or_create(s, tg_id)
         grp = user.group
         group_name = (grp.name if grp else None) or "—"
         sg = user.subgroup or "Все"
+
+        daily_info = ""
+        if user.daily_notifications and user.daily_time:
+            day_label = "завтра" if user.daily_send_tomorrow else "сегодня"
+            daily_info = (
+                f"\n⏰ Ежедн.: {user.daily_time.strftime('%H:%M')} "
+                f"(расписание на {day_label})"
+            )
+
         return (
             f"⚙️ <b>Настройки</b>\n\n"
             f"📚 Группа: <b>{group_name}</b>\n"
-            f"👤 Подгруппа: <b>{sg}</b>",
+            f"👤 Подгруппа: <b>{sg}</b>"
+            f"{daily_info}",
             settings_kb(user),
         )
 
-
-# ---------------------------------------------------------------------------
-# /settings command
-# ---------------------------------------------------------------------------
 
 async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     tg_id = update.effective_user.id
@@ -67,56 +52,54 @@ async def cmd_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
 
 
-# ---------------------------------------------------------------------------
-# Main callback dispatcher
-# ---------------------------------------------------------------------------
-
 async def cb_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
 
-    data = query.data              # "st:home", "st:set_sg:01", etc.
-    parts = data.split(":", 2)
+    parts = query.data.split(":", 2)
     action = parts[1] if len(parts) > 1 else "home"
-    value = parts[2] if len(parts) > 2 else ""
-    tg_id = update.effective_user.id
+    value  = parts[2] if len(parts) > 2 else ""
+    tg_id  = update.effective_user.id
 
-    # ---- Navigation ----
+    # ── Navigation ──────────────────────────────────────────────────────────
     if action == "home":
         await _show_settings(query, tg_id)
 
     elif action == "subgroup":
         await query.edit_message_text(
             "👤 <b>Выберите подгруппу</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=subgroup_kb(),
+            parse_mode=ParseMode.HTML, reply_markup=subgroup_kb(),
         )
 
     elif action == "set_sg":
         sg = None if value == "all" else value
-        await asyncio.to_thread(_do, ur.set_subgroup, tg_id, sg)
+        def _s():
+            with get_session() as s: ur.set_subgroup(s, tg_id, sg)
+        await asyncio.to_thread(_s)
         await _show_settings(query, tg_id)
 
     elif action == "display":
         await query.edit_message_text(
-            "🎨 <b>Отображение пар другой подгруппы в расписании</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=display_mode_kb(),
+            "🎨 <b>Отображение пар другой подгруппы</b>",
+            parse_mode=ParseMode.HTML, reply_markup=display_mode_kb(),
         )
 
     elif action == "set_dm":
-        await asyncio.to_thread(_do, ur.set_display_mode, tg_id, value)
+        def _s():
+            with get_session() as s: ur.set_display_mode(s, tg_id, value)
+        await asyncio.to_thread(_s)
         await _show_settings(query, tg_id)
 
     elif action == "diff_display":
         await query.edit_message_text(
-            "📢 <b>Показывать изменения другой подгруппы в уведомлениях</b>",
-            parse_mode=ParseMode.HTML,
-            reply_markup=diff_display_mode_kb(),
+            "📢 <b>Изменения другой подгруппы в уведомлениях</b>",
+            parse_mode=ParseMode.HTML, reply_markup=diff_display_mode_kb(),
         )
 
     elif action == "set_ddm":
-        await asyncio.to_thread(_do, ur.set_diff_display_mode, tg_id, value)
+        def _s():
+            with get_session() as s: ur.set_diff_display_mode(s, tg_id, value)
+        await asyncio.to_thread(_s)
         await _show_settings(query, tg_id)
 
     elif action == "toggle_notif":
@@ -127,39 +110,67 @@ async def cb_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         await asyncio.to_thread(_toggle)
         await _show_settings(query, tg_id)
 
+    # ── Daily time ───────────────────────────────────────────────────────────
     elif action == "daily_time":
+        def _get_tomorrow():
+            with get_session() as s:
+                user, _ = ur.get_or_create(s, tg_id)
+                return bool(user.daily_send_tomorrow)
+        send_tomorrow = await asyncio.to_thread(_get_tomorrow)
         await query.edit_message_text(
-            "⏰ <b>Выберите время ежедневного расписания</b>\n\n"
-            "Каждый день в выбранное время бот пришлёт расписание на сегодня.",
+            "⏰ <b>Ежедневное расписание</b>\n\n"
+            "Выберите время отправки и для какого дня.",
             parse_mode=ParseMode.HTML,
-            reply_markup=daily_time_kb(),
+            reply_markup=daily_time_kb(send_tomorrow),
         )
 
     elif action == "set_dt":
         if value == "off":
-            await asyncio.to_thread(_do, ur.set_daily_time, tg_id, None, False)
+            def _s():
+                with get_session() as s: ur.set_daily_time(s, tg_id, None, False)
+            await asyncio.to_thread(_s)
         else:
             t = _parse_time(value)
             if t:
-                await asyncio.to_thread(_do, ur.set_daily_time, tg_id, t, True)
+                def _s():
+                    with get_session() as s: ur.set_daily_time(s, tg_id, t, True)
+                await asyncio.to_thread(_s)
         await _show_settings(query, tg_id)
 
+    elif action in ("toggle_daily_tomorrow", "toggle_daily_tomorrow_dt"):
+        # Toggle the send_tomorrow flag
+        def _toggle_tomorrow():
+            with get_session() as s:
+                user, _ = ur.get_or_create(s, tg_id)
+                ur.set_daily_send_tomorrow(s, tg_id, not user.daily_send_tomorrow)
+                return bool(user.daily_send_tomorrow)  # returns OLD value before toggle
+        old = await asyncio.to_thread(_toggle_tomorrow)
+        new_val = not old
+
+        if action == "toggle_daily_tomorrow_dt":
+            # Stay in daily_time screen, refresh keyboard
+            await query.edit_message_text(
+                "⏰ <b>Ежедневное расписание</b>\n\n"
+                "Выберите время отправки и для какого дня.",
+                parse_mode=ParseMode.HTML,
+                reply_markup=daily_time_kb(new_val),
+            )
+        else:
+            # Toggled from main settings — return to settings
+            await _show_settings(query, tg_id)
+
     elif action == "custom_time":
-        # Save state: waiting for text input
         ctx.user_data["waiting_for"] = "daily_time"
-        ctx.user_data["settings_chat"] = query.message.chat_id
         ctx.user_data["settings_msg_id"] = query.message.message_id
         await query.edit_message_text(
-            "⏰ Введите время в формате <b>ЧЧ:ММ</b>\n"
-            "Например: <code>08:30</code>",
+            "⏰ Введите время в формате <b>ЧЧ:ММ</b>\nНапример: <code>08:30</code>",
             parse_mode=ParseMode.HTML,
         )
 
     elif action == "change_group":
-        def _groups():
-            with get_session() as s:
-                return gr.get_active(s)
-        groups = await asyncio.to_thread(_groups)
+        def _g():
+            with get_session() as s: return gr.get_active(s)
+        groups = await asyncio.to_thread(_g)
         await query.edit_message_text(
             "🔄 <b>Выберите группу</b>",
             parse_mode=ParseMode.HTML,
@@ -167,51 +178,31 @@ async def cb_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
 
-# ---------------------------------------------------------------------------
-# Handle freeform text when waiting for custom time input
-# ---------------------------------------------------------------------------
-
 async def handle_custom_time_input(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-    """Called when user_data['waiting_for'] == 'daily_time'."""
     if ctx.user_data.get("waiting_for") != "daily_time":
-        return  # Not our message — let it fall through
-
+        return
     tg_id = update.effective_user.id
-    text = update.message.text.strip()
-    t = _parse_time(text)
-
+    t = _parse_time(update.message.text.strip())
     if t is None:
         await update.message.reply_text(
-            "⚠️ Неверный формат. Введите время как <b>ЧЧ:ММ</b> (например, <code>08:30</code>).",
+            "⚠️ Неверный формат. Введите как <b>ЧЧ:ММ</b> (например, <code>08:30</code>).",
             parse_mode=ParseMode.HTML,
         )
         return
-
-    await asyncio.to_thread(_do, ur.set_daily_time, tg_id, t, True)
+    def _s():
+        with get_session() as s: ur.set_daily_time(s, tg_id, t, True)
+    await asyncio.to_thread(_s)
     ctx.user_data.pop("waiting_for", None)
-
-    # Rebuild settings and send as new message (original was replaced by text prompt)
-    text_msg, kb = await asyncio.to_thread(_build_settings_msg, tg_id)
+    text, kb = await asyncio.to_thread(_build_settings_msg, tg_id)
     await update.message.reply_text(
-        f"✅ Время установлено: <b>{t.strftime('%H:%M')}</b>\n\n" + text_msg,
-        parse_mode=ParseMode.HTML,
-        reply_markup=kb,
+        f"✅ Время: <b>{t.strftime('%H:%M')}</b>\n\n" + text,
+        parse_mode=ParseMode.HTML, reply_markup=kb,
     )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 async def _show_settings(query, tg_id: int) -> None:
     text, kb = await asyncio.to_thread(_build_settings_msg, tg_id)
     await query.edit_message_text(text, parse_mode=ParseMode.HTML, reply_markup=kb)
-
-
-def _do(fn, *args):
-    """Run a repository function inside a session."""
-    with get_session() as s:
-        fn(s, *args)
 
 
 def _parse_time(raw: str) -> Optional[time]:
@@ -219,6 +210,4 @@ def _parse_time(raw: str) -> Optional[time]:
     if not m:
         return None
     h, mi = int(m.group(1)), int(m.group(2))
-    if 0 <= h <= 23 and 0 <= mi <= 59:
-        return time(h, mi)
-    return None
+    return time(h, mi) if 0 <= h <= 23 and 0 <= mi <= 59 else None

@@ -1,20 +1,17 @@
-"""Format schedule and diff objects for Telegram (HTML parse mode).
+"""Format schedule and diff for Telegram HTML.
 
-Display modes for other-subgroup lessons:
-  hide                  — omit completely (default)
-  strikethrough         — <s>text</s>
-  spoiler               — <tg-spoiler>text</tg-spoiler>
-  spoiler_strikethrough — <tg-spoiler><s>text</s></tg-spoiler>
-    (appears hidden; after tap shows as strikethrough)
-
-Diff display modes for other-subgroup changes in notifications:
-  hide                  — omit completely
-  inline_strikethrough  — show in same message, strikethrough
-  inline_spoiler        — show in same message, spoiler
-  separate              — caller sends a second message
+Key features:
+  - Same-time lessons grouped: time shown once, then all lesson bodies listed.
+  - Subject filters applied before display:
+      always_show → show regardless of subgroup / display_mode
+      never_show  → hide completely
+  - Display modes for other-subgroup lessons:
+      hide | strikethrough | spoiler | spoiler_strikethrough
+  - Diff display modes for other-subgroup changes:
+      hide | inline_strikethrough | inline_spoiler | separate
 """
 from __future__ import annotations
-from datetime import date
+from datetime import date, time
 from typing import Optional
 
 from models.domain import DaySchedule, LessonData, ScheduleChange, ChangeType
@@ -27,6 +24,9 @@ _MONTHS_RU = (
     "", "января", "февраля", "марта", "апреля", "мая", "июня",
     "июля", "августа", "сентября", "октября", "ноября", "декабря",
 )
+
+# Type alias for filter dict
+SubjectFilters = dict[int, str]  # subject_id → filter_type
 
 
 def _esc(text: str) -> str:
@@ -42,9 +42,7 @@ def fmt_date_header(d: date) -> str:
 # ---------------------------------------------------------------------------
 
 def _wrap(text: str, mode: str) -> Optional[str]:
-    """Wrap text in the appropriate Telegram HTML for the display mode.
-    Returns None for 'hide' (caller should skip the lesson).
-    """
+    """Wrap text in Telegram HTML for the display mode.  Returns None for 'hide'."""
     if mode == "hide":
         return None
     if mode == "strikethrough":
@@ -53,28 +51,30 @@ def _wrap(text: str, mode: str) -> Optional[str]:
         return f"<tg-spoiler>{text}</tg-spoiler>"
     if mode == "spoiler_strikethrough":
         return f"<tg-spoiler><s>{text}</s></tg-spoiler>"
-    return text  # unknown mode → show normally
+    return text
+
+
+def _filter_type(lesson: LessonData, filters: SubjectFilters) -> Optional[str]:
+    """Return 'always_show', 'never_show', or None for a lesson."""
+    if not filters or lesson.subject_id is None:
+        return None
+    return filters.get(lesson.subject_id)
 
 
 def _is_other_subgroup(lesson: LessonData, user_subgroup: Optional[str]) -> bool:
-    return bool(
-        user_subgroup
-        and lesson.subgroup
-        and lesson.subgroup != user_subgroup
-    )
+    return bool(user_subgroup and lesson.subgroup and lesson.subgroup != user_subgroup)
 
 
 # ---------------------------------------------------------------------------
-# Lesson formatting
+# Lesson body (without time header)
 # ---------------------------------------------------------------------------
 
-def _lesson_body(lesson: LessonData, show_subgroup: bool = True) -> str:
-    """Raw HTML for a single lesson (no time header)."""
+def _lesson_body(lesson: LessonData) -> str:
     lines: list[str] = []
     if lesson.title:
         lines.append(f"📚 {_esc(lesson.title)}")
     if lesson.lesson_type:
-        sg = f" (подгр. {lesson.subgroup})" if lesson.subgroup and show_subgroup else ""
+        sg = f" (подгр. {lesson.subgroup})" if lesson.subgroup else ""
         lines.append(f"🔬 {_esc(lesson.lesson_type)}{sg}")
     if lesson.teacher:
         lines.append(f"👨‍🏫 {_esc(lesson.teacher)}")
@@ -83,53 +83,77 @@ def _lesson_body(lesson: LessonData, show_subgroup: bool = True) -> str:
     return "\n".join(lines)
 
 
-def fmt_lesson(
+def _render_lesson_body(
     lesson: LessonData,
-    user_subgroup: Optional[str] = None,
-    display_mode: str = "hide",
-    show_time: bool = True,
+    user_subgroup: Optional[str],
+    display_mode: str,
+    filters: SubjectFilters,
 ) -> Optional[str]:
-    """Format one lesson. Returns None if it should be hidden entirely."""
-    lines: list[str] = []
-    if show_time and lesson.start_time and lesson.end_time:
-        lines.append(
-            f"<b>{lesson.start_time.strftime('%H:%M')}–"
-            f"{lesson.end_time.strftime('%H:%M')}</b>"
-        )
+    """Return formatted body or None if hidden."""
+    ft = _filter_type(lesson, filters)
+
+    if ft == "never_show":
+        return None
+    if ft == "always_show":
+        return _lesson_body(lesson)  # always show, no wrapping
 
     body = _lesson_body(lesson)
     if not body:
         return None
 
     if _is_other_subgroup(lesson, user_subgroup):
-        wrapped = _wrap(body, display_mode)
-        if wrapped is None:
-            return None
-        lines.append(wrapped)
-    else:
-        lines.append(body)
+        return _wrap(body, display_mode)
 
-    return "\n".join(lines)
+    return body
 
 
 # ---------------------------------------------------------------------------
-# Day / multi-day formatting
+# Day formatting (time-grouped)
 # ---------------------------------------------------------------------------
 
 def fmt_day(
     day: DaySchedule,
     user_subgroup: Optional[str] = None,
     display_mode: str = "hide",
+    filters: Optional[SubjectFilters] = None,
 ) -> str:
     header = f"<b>{fmt_date_header(day.date)}</b>"
     if not day.lessons:
         return f"{header}\n<i>Пар нет</i>"
 
-    blocks: list[str] = []
+    _filters = filters or {}
+
+    # Group lessons by (start_time, end_time)
+    slot_order: list[tuple[Optional[time], Optional[time]]] = []
+    slot_lessons: dict[tuple, list[LessonData]] = {}
     for lesson in day.lessons:
-        text = fmt_lesson(lesson, user_subgroup, display_mode)
-        if text:
-            blocks.append(text)
+        key = (lesson.start_time, lesson.end_time)
+        if key not in slot_lessons:
+            slot_order.append(key)
+            slot_lessons[key] = []
+        slot_lessons[key].append(lesson)
+
+    blocks: list[str] = []
+    for key in slot_order:
+        st, et = key
+        lessons_in_slot = slot_lessons[key]
+
+        # Render each lesson body
+        bodies: list[str] = []
+        for lesson in lessons_in_slot:
+            body = _render_lesson_body(lesson, user_subgroup, display_mode, _filters)
+            if body:
+                bodies.append(body)
+
+        if not bodies:
+            continue
+
+        # Time header shown once, then bodies separated by blank line
+        if st and et:
+            time_line = f"<b>{st.strftime('%H:%M')}–{et.strftime('%H:%M')}</b>"
+            blocks.append(time_line + "\n" + "\n\n".join(bodies))
+        else:
+            blocks.append("\n\n".join(bodies))
 
     if not blocks:
         return f"{header}\n<i>Пар нет (для вашей подгруппы)</i>"
@@ -141,11 +165,46 @@ def fmt_days(
     days: list[DaySchedule],
     user_subgroup: Optional[str] = None,
     display_mode: str = "hide",
+    filters: Optional[SubjectFilters] = None,
 ) -> str:
     if not days:
         return "<i>Расписание не найдено.</i>"
     sep = "\n\n" + "─" * 20 + "\n\n"
-    return sep.join(fmt_day(d, user_subgroup, display_mode) for d in days)
+    return sep.join(fmt_day(d, user_subgroup, display_mode, filters) for d in days)
+
+
+def has_visible_lessons(
+    day: DaySchedule,
+    user_subgroup: Optional[str],
+    display_mode: str,
+    filters: Optional[SubjectFilters],
+) -> bool:
+    """Return True if *day* has at least one visible lesson after all filtering."""
+    _f = filters or {}
+    for lesson in day.lessons:
+        body = _render_lesson_body(lesson, user_subgroup, display_mode, _f)
+        if body is not None:
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
+# "No lessons" block helper
+# ---------------------------------------------------------------------------
+
+def fmt_no_lessons(
+    next_day: Optional[DaySchedule],
+    user_subgroup: Optional[str],
+    display_mode: str,
+    filters: Optional[SubjectFilters],
+) -> str:
+    text = "<i>Пар нет.</i>"
+    if next_day:
+        text += (
+            f"\n\n<b>Следующие занятия — {fmt_date_header(next_day.date)}:</b>\n\n"
+            + fmt_day(next_day, user_subgroup, display_mode, filters)
+        )
+    return text
 
 
 # ---------------------------------------------------------------------------
@@ -192,30 +251,33 @@ def _fmt_one_change(ch: ScheduleChange) -> str:
         )
     if ch.change_type == ChangeType.MOVED:
         old_t = ch.old_lesson.time_label if ch.old_lesson else "?"
-        return (
-            f"{icon} {_snap_line(ch.new_lesson)}\n"
-            f"  {old_t} → {t}"
-        )
+        return f"{icon} {_snap_line(ch.new_lesson)}\n  {old_t} → {t}"
     return f"{icon} {_snap_line(ch.new_lesson or ch.old_lesson)}"
 
 
 def _split_changes_by_subgroup(
-    changes: list[ScheduleChange],
-    user_subgroup: Optional[str],
+    changes: list[ScheduleChange], user_subgroup: Optional[str]
 ) -> tuple[list[ScheduleChange], list[ScheduleChange]]:
-    """Split into (my_subgroup_changes, other_subgroup_changes)."""
     if not user_subgroup:
         return changes, []
-
     mine, other = [], []
     for ch in changes:
         snap = ch.new_lesson or ch.old_lesson
         sg = snap.subgroup if snap else None
-        if sg is None or sg == user_subgroup:
-            mine.append(ch)
-        else:
-            other.append(ch)
+        (mine if (sg is None or sg == user_subgroup) else other).append(ch)
     return mine, other
+
+
+def _build_change_message(ch_list: list[ScheduleChange], title: str) -> str:
+    by_date: dict[date, list[ScheduleChange]] = {}
+    for c in ch_list:
+        by_date.setdefault(c.lesson_date, []).append(c)
+    parts = [f"<b>{title}</b>"]
+    for d in sorted(by_date):
+        parts.append(f"\n<b>{fmt_date_header(d)}</b>")
+        for ch in by_date[d]:
+            parts.append(_fmt_one_change(ch))
+    return "\n".join(parts)
 
 
 def fmt_changes(
@@ -223,41 +285,21 @@ def fmt_changes(
     user_subgroup: Optional[str] = None,
     diff_display_mode: str = "hide",
 ) -> tuple[str, Optional[str]]:
-    """Format change notifications.
-
-    Returns (main_message, optional_second_message).
-    second_message is non-None only when diff_display_mode == 'separate'.
-    """
+    """Returns (main_message, optional_second_message)."""
     if not changes:
         return "<i>Изменений нет.</i>", None
 
     mine, other = _split_changes_by_subgroup(changes, user_subgroup)
-
-    def _build_message(ch_list: list[ScheduleChange], title: str) -> str:
-        by_date: dict[date, list[ScheduleChange]] = {}
-        for c in ch_list:
-            by_date.setdefault(c.lesson_date, []).append(c)
-
-        parts = [f"<b>{title}</b>"]
-        for d in sorted(by_date):
-            parts.append(f"\n<b>{fmt_date_header(d)}</b>")
-            for ch in by_date[d]:
-                parts.append(_fmt_one_change(ch))
-        return "\n".join(parts)
-
-    # Build main message (always for user's subgroup)
     main_parts: list[str] = []
     if mine:
-        main_parts.append(_build_message(mine, "📣 Изменения в расписании"))
+        main_parts.append(_build_change_message(mine, "📣 Изменения в расписании"))
 
-    # Handle other subgroup
     second_msg: Optional[str] = None
     if other and diff_display_mode != "hide":
         if diff_display_mode == "separate":
-            second_msg = _build_message(other, "📣 Изменения (другая подгруппа)")
+            second_msg = _build_change_message(other, "📣 Изменения (другая подгруппа)")
         else:
-            # Wrap each change line
-            other_lines: list[str] = ["\n<i>Другая подгруппа:</i>"]
+            other_lines = ["\n<i>Другая подгруппа:</i>"]
             for ch in other:
                 line = _fmt_one_change(ch)
                 if diff_display_mode == "inline_strikethrough":
@@ -276,15 +318,20 @@ def fmt_changes(
 # ---------------------------------------------------------------------------
 
 DISPLAY_MODE_LABELS = {
-    "hide": "🙈 Скрыть",
-    "strikethrough": "~~Зачеркнуть~~",
-    "spoiler": "👁 Спойлер",
+    "hide":                  "🙈 Скрыть",
+    "strikethrough":         "~~Зачеркнуть~~",
+    "spoiler":               "👁 Спойлер",
     "spoiler_strikethrough": "👁+~~ Спойлер+зачерк.",
 }
 
 DIFF_DISPLAY_MODE_LABELS = {
-    "hide": "🙈 Не показывать",
-    "inline_strikethrough": "~~В сообщении (зачерк.)~~",
-    "inline_spoiler": "👁 В сообщении (спойлер)",
-    "separate": "📨 Отдельным сообщением",
+    "hide":                  "🙈 Не показывать",
+    "inline_strikethrough":  "~~В сообщении (зачерк.)~~",
+    "inline_spoiler":        "👁 В сообщении (спойлер)",
+    "separate":              "📨 Отдельным сообщением",
+}
+
+FILTER_TYPE_LABELS = {
+    "always_show": "📌 Всегда показывать",
+    "never_show":  "🚫 Всегда скрывать",
 }
