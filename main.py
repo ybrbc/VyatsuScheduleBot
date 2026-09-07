@@ -2,7 +2,8 @@
 from __future__ import annotations
 import logging, os, sys
 
-from telegram import Update
+from telegram import BotCommand, BotCommandScopeChat, Update
+
 from telegram.ext import (
     Application, CallbackQueryHandler, CommandHandler, MessageHandler, filters,
 )
@@ -19,6 +20,7 @@ from bot.handlers.schedule import (
 from bot.handlers.settings import cmd_settings, cb_settings, handle_custom_time_input
 from bot.handlers.subject_filters import cb_subject_filter
 from bot.handlers.daily import send_daily_schedules
+from bot.handlers.progress import handle_progress, cb_progress
 from services import schedule_updater as su
 from utils.user_utils import configure as configure_admin_ids
 
@@ -70,9 +72,40 @@ async def _daily_job(ctx) -> None:
     """Send daily schedule notifications."""
     await send_daily_schedules(bot=ctx.bot)
 
+async def _setup_commands(app: Application) -> None:
+    public_commands = [
+        BotCommand("start", "Главное меню"),
+        BotCommand("today", "Расписание на сегодня"),
+        BotCommand("tomorrow", "Расписание на завтра"),
+        BotCommand("week", "Расписание на неделю"),
+        BotCommand("twoweeks", "Расписание на 2 недели"),
+        BotCommand("nextweek", "Следующая неделя"),
+        BotCommand("settings", "Настройки"),
+        BotCommand("progress", "Прогресс"),
+    ]
+
+    admin_commands = public_commands + [
+        BotCommand("ping", "Статус бота"),
+        BotCommand("update", "Принудительно обновить расписание"),
+    ]
+
+    # Меню для всех пользователей
+    await app.bot.set_my_commands(public_commands)
+
+    # Расширенное меню только для администраторов
+    for admin_id in SECRETS.get("ADMIN_IDS", []):
+        await app.bot.set_my_commands(
+            admin_commands,
+            scope=BotCommandScopeChat(chat_id=int(admin_id)),
+        )
 
 def build_app() -> Application:
-    app = Application.builder().token(SECRETS["TELEGRAM_TOKEN"]).build()
+    app = (
+        Application.builder()
+        .token(SECRETS["TELEGRAM_TOKEN"])
+        .post_init(_setup_commands)
+        .build()
+    )
 
     # Commands
     app.add_handler(CommandHandler("start",     cmd_start))
@@ -82,6 +115,7 @@ def build_app() -> Application:
     app.add_handler(CommandHandler("twoweeks",  handle_two_weeks))
     app.add_handler(CommandHandler("nextweek",  handle_next_weeks))
     app.add_handler(CommandHandler("settings",  cmd_settings))
+    app.add_handler(CommandHandler("progress",  handle_progress))
     app.add_handler(CommandHandler("ping",      cmd_ping))
     app.add_handler(CommandHandler("update",    cmd_update))
 
@@ -91,6 +125,7 @@ def build_app() -> Application:
     app.add_handler(MessageHandler(filters.Regex("^🗓 Неделя$"),   handle_week))
     app.add_handler(MessageHandler(filters.Regex("^📖 2 недели$"), handle_two_weeks))
     app.add_handler(MessageHandler(filters.Regex("^🗒 Следующая неделя$"), handle_next_weeks))
+    app.add_handler(MessageHandler(filters.Regex("^📊 Прогресс$"), handle_progress))
 
     # Free-text input (custom daily time)
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_custom_time_input))
@@ -100,6 +135,7 @@ def build_app() -> Application:
     app.add_handler(CallbackQueryHandler(cb_group_selected, pattern=r"^grp:"))
     app.add_handler(CallbackQueryHandler(cb_subject_filter, pattern=r"^sf:"))
     app.add_handler(CallbackQueryHandler(cb_settings,       pattern=r"^st:"))
+    app.add_handler(CallbackQueryHandler(cb_progress,       pattern=r"^progress$"))
     app.add_handler(CallbackQueryHandler(cb_start_hub,      pattern=r"^start:hub$"))
 
     # Jobs

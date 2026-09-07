@@ -1,0 +1,11 @@
+.venv/
+.git/
+.github/
+.idea/
+.vscode/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+secrets.json
+storage/

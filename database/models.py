@@ -4,7 +4,7 @@ from datetime import date, time, datetime
 from typing import Optional, List
 
 from sqlalchemy import (
-    BigInteger, Boolean, Column, Date, DateTime, ForeignKey,
+    BigInteger, Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey,
     Integer, JSON, String, Text, Time, UniqueConstraint, func,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -58,6 +58,36 @@ class Subject(Base):
     teacher: Mapped[Optional["Teacher"]] = relationship(back_populates="subjects")
     lessons: Mapped[List["Lesson"]] = relationship(back_populates="subject")
     excluded_by: Mapped[List["ExcludedSubject"]] = relationship(back_populates="subject")
+
+
+class SubjectProgressTarget(Base):
+    """Configured total academic hours for a subject/type/subgroup.
+
+    ``subgroup`` is stored as an empty string for lessons common to the whole
+    group.  Keeping it non-null makes the uniqueness rule work identically on
+    PostgreSQL and SQLite.
+    """
+    __tablename__ = "subject_progress_targets"
+    __table_args__ = (
+        UniqueConstraint(
+            "group_id", "title", "lesson_type", "subgroup",
+            name="uq_subject_progress_target",
+        ),
+        CheckConstraint("total_hours > 0", name="ck_subject_progress_total_hours"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("groups.id", ondelete="CASCADE"), nullable=False
+    )
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    lesson_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    subgroup: Mapped[str] = mapped_column(String(10), nullable=False, default="")
+    total_hours: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now()
+    )
 
 
 class Room(Base):

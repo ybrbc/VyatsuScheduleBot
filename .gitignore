@@ -13,3 +13,5 @@ storage/hashes/
 dist/
 build/
 .pytest_cache/
+docker-compose.yml
+Dockerfile

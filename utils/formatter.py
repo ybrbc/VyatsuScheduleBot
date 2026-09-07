@@ -208,6 +208,80 @@ def fmt_no_lessons(
 
 
 # ---------------------------------------------------------------------------
+# Subject progress
+# ---------------------------------------------------------------------------
+
+_PROGRESS_BAR_WIDTH = 25
+_PROGRESS_PARTIALS = ("", "▏", "▎", "▍", "▌", "▋", "▊", "▉")
+
+
+def _progress_bar(percent: float, width: int = _PROGRESS_BAR_WIDTH) -> str:
+    visual_percent = min(max(percent, 0.0), 100.0)
+    exact = visual_percent / 100.0 * width
+    full = int(exact)
+    eighths = int((exact - full) * 8)
+
+    partial = _PROGRESS_PARTIALS[eighths] if full < width else ""
+    empty = width - full - (1 if partial else 0)
+    return "█" * full + partial + "░" * empty
+
+
+def _progress_labels(completed: int, total: int, percent: float) -> str:
+    """Place completed pairs left, percent centered and total pairs right."""
+    width = _PROGRESS_BAR_WIDTH
+
+    completed_pairs = completed / 2
+    total_pairs = total / 2
+
+    def fmt_pairs(value: float) -> str:
+        if value.is_integer():
+            return f"{int(value)} пар"
+        return f"{value:g} пар"
+
+    left = fmt_pairs(completed_pairs)
+    middle = f"{percent:.1f}%"
+    right = fmt_pairs(total_pairs)
+
+    chars = [" "] * width
+    chars[:len(left)] = left
+
+    right_start = width - len(right)
+    chars[right_start:] = right
+
+    middle_start = max(len(left) + 1, (width - len(middle)) // 2)
+    middle_start = min(middle_start, right_start - len(middle) - 1)
+    chars[middle_start:middle_start + len(middle)] = middle
+
+    return "".join(chars)
+
+
+def fmt_progress(items) -> str:
+    """Format configured progress items as Telegram HTML."""
+    if not items:
+        return "📊 <b>Прогресс</b>\n\n<i>Для вашей группы прогресс пока не настроен.</i>"
+
+    parts: list[str] = ["📊 <b>Прогресс</b>"]
+    current_title: Optional[str] = None
+
+    for item in items:
+        if item.title != current_title:
+            parts.append(f"\n<b>📚 {_esc(item.title)}</b>")
+            current_title = item.title
+
+        type_line = _esc(item.lesson_type)
+        if item.subgroup:
+            type_line += f" · подгр. {_esc(item.subgroup)}"
+
+        labels = _progress_labels(
+            item.completed_hours, item.total_hours, item.percent
+        )
+        bar = _progress_bar(item.percent)
+        
+        parts.append(f"{type_line}\n<code>{labels}\n{bar}</code>")
+    return "\n".join(parts)
+
+
+# ---------------------------------------------------------------------------
 # Diff formatting
 # ---------------------------------------------------------------------------
 

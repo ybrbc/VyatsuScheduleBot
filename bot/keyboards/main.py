@@ -9,8 +9,9 @@ from utils.formatter import DISPLAY_MODE_LABELS, DIFF_DISPLAY_MODE_LABELS
 
 def main_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
-        [["📅 Сегодня", "➡️ Завтра"], ["🗓 Неделя", "📖 2 недели"], ["🗒 Следующая неделя"]],
-        resize_keyboard=True, is_persistent=True,
+        [["📅 Сегодня", "➡️ Завтра"], ["🗓 Неделя", "📖 2 недели"],
+         ["🗒 Следующая неделя", "📊 Прогресс"]],
+        resize_keyboard=True, is_persistent=False,
     )
 
 
@@ -24,6 +25,7 @@ def start_hub_kb(has_group: bool, group_name: Optional[str] = None) -> InlineKey
          InlineKeyboardButton("➡️ Завтра",    callback_data="view:tomorrow")],
         [InlineKeyboardButton("🗓 Неделя",    callback_data="view:week"),
          InlineKeyboardButton("📖 2 недели",  callback_data="view:two_weeks")],
+        [InlineKeyboardButton("📊 Прогресс", callback_data="progress")],
         [InlineKeyboardButton("⚙️ Настройки", callback_data="st:home")],
     ])
 
