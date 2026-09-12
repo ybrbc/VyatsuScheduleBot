@@ -82,7 +82,6 @@ async def send_daily_schedules(bot: Bot) -> None:
         u for u in users
         if u.daily_time
         and (u.daily_time.hour, u.daily_time.minute) == current_hm
-        # and u.last_daily_sent != today
     ]
 
     if not to_notify:
