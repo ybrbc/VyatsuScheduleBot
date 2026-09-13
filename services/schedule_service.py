@@ -25,6 +25,7 @@ def _lesson_to_domain(lesson: Lesson) -> LessonData:
         subgroup=subj.subgroup if subj else None,
         start_time=slot.start_time if slot else None,
         end_time=slot.end_time if slot else None,
+        subject_id=lesson.subject_id if lesson else None,
     )
 
 
