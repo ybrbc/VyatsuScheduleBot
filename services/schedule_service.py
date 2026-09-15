@@ -5,10 +5,9 @@ from datetime import date, timedelta
 from typing import Optional
 
 from database.connection import get_session
-from database.models import Lesson, Subject, TimeSlot
+from database.models import Lesson
 from models.domain import DaySchedule, LessonData
 from repositories import schedule_repository as sr
-from repositories import group_repository as gr
 from utils.formatter import SubjectFilters, has_visible_lessons
 
 logger = logging.getLogger(__name__)

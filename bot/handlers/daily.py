@@ -82,7 +82,6 @@ async def send_daily_schedules(bot: Bot) -> None:
         u for u in users
         if u.daily_time
         and (u.daily_time.hour, u.daily_time.minute) == current_hm
-        # and u.last_daily_sent != today
     ]
 
     if not to_notify:
@@ -101,11 +100,12 @@ async def send_daily_schedules(bot: Bot) -> None:
 
         try:
             header, body = await _build_schedule_text(user, target_date, filters)
-            await bot.send_message(
-                chat_id=user.telegram_id,
-                text=f"<b>{header}</b>\n\n{body}",
-                parse_mode=ParseMode.HTML,
-            )
+            if body != "<i>Пар нет.</i>":
+                await bot.send_message(
+                    chat_id=user.telegram_id,
+                    text=f"<b>{header}</b>\n\n{body}",
+                    parse_mode=ParseMode.HTML,
+                )
 
             # Log the send and mark today as sent
             def _persist(uid=user.id, td=target_date, sent=now, tg=user.telegram_id):
